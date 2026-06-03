@@ -150,7 +150,6 @@ if st.session_state.current_view == 'home':
             labels.append("CASH")
             sizes.append(data['cash'])
 
-        # 🛠️ ลดขนาดกราฟจาก (10, 6) ลงเหลือ (6, 4)
         fig, ax = plt.subplots(figsize=(6, 4))
         fig.patch.set_facecolor('#FDF7E3') 
         
@@ -158,13 +157,12 @@ if st.session_state.current_view == 'home':
         for i, patch in enumerate(patches):
             color = patch.get_facecolor()
             texts[i].set_color(color)
-            texts[i].set_fontsize(12) # ลดขนาดฟอนต์ให้สมดุลกับกราฟ
+            texts[i].set_fontsize(12)
             texts[i].set_fontweight('bold')
             autotexts[i].set_color('#FFFFFF')
-            autotexts[i].set_fontsize(10) # ลดขนาดเปอร์เซ็นต์ลงด้วย
+            autotexts[i].set_fontsize(10)
             autotexts[i].set_fontweight('bold')
             
-        # 🛠️ จับกราฟยัดใส่คอลัมน์ตรงกลาง เพื่อบีบไม่ให้ขยายล้นจอ
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.pyplot(fig)
@@ -175,13 +173,19 @@ elif st.session_state.current_view == 'detail':
     item = st.session_state.current_item
     cat = st.session_state.current_cat
     
+    # อัปเดตโครงสร้าง JSON ให้รองรับฟีเจอร์ใหม่
     if item not in data["details"]:
         data["details"][item] = {
             "target_invest": 0, "info": "", "thesis": "", "monitor": "",
             "val_data": [["","","",""], ["","","",""], ["","","",""]],
-            "sr_s": ["", "", "", ""], "sr_r": ["", "", "", ""]
+            "sr_s": ["", "", "", ""], "sr_r": ["", "", "", ""],
+            "next_earnings": "", "sr_action": ["", "", "", ""]
         }
     details = data["details"][item]
+    
+    # ป้องกันแอปพังจากไฟล์เซฟเก่าที่ไม่มี key เหล่านี้
+    if "next_earnings" not in details: details["next_earnings"] = ""
+    if "sr_action" not in details: details["sr_action"] = ["", "", "", ""]
 
     col_title, col_edit, col_del = st.columns([1, 4, 1.5])
     col_title.markdown("<h2 style='margin-top:0px;'>ชื่อ:</h2>", unsafe_allow_html=True)
@@ -208,6 +212,14 @@ elif st.session_state.current_view == 'detail':
         save_data()
         st.rerun()
 
+    # 🛠️ ฟีเจอร์ 1: เพิ่มกล่องวันที่ประกาศงบถัดไป
+    col_earn_title, col_earn_edit, _ = st.columns([1, 4, 1.5])
+    col_earn_title.markdown("<div style='margin-top:8px;'><b>วันประกาศงบฯ:</b></div>", unsafe_allow_html=True)
+    new_earnings = col_earn_edit.text_input("next_earnings", value=details["next_earnings"], key=f"earn_{item}", label_visibility="collapsed", placeholder="เช่น Q3 2026 หรือ วันที่ 15 พ.ย.")
+    if new_earnings != details["next_earnings"]:
+        details["next_earnings"] = new_earnings
+        save_data()
+
     st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
 
     if cat in ['held_stocks', 'other_assets']:
@@ -216,10 +228,10 @@ elif st.session_state.current_view == 'detail':
         
         c1, c2, c3, c4, c5, c6 = st.columns([1.2, 2.5, 1, 2.5, 1, 3])
         c1.markdown("<div style='margin-top: 8px; font-size: 18px;'>ลงทุนไปแล้ว:</div>", unsafe_allow_html=True)
-        new_amt = c2.text_input("invested", value=f"฿ {amt:,.0f}", label_visibility="collapsed")
+        new_amt = c2.text_input("invested", value=f"฿ {amt:,.0f}", key=f"inv_{item}", label_visibility="collapsed")
         
         c3.markdown("<div style='margin-top: 8px; font-size: 18px;'>เป้าหมาย:</div>", unsafe_allow_html=True)
-        new_tgt = c4.text_input("target", value=f"฿ {tgt:,.0f}", label_visibility="collapsed")
+        new_tgt = c4.text_input("target", value=f"฿ {tgt:,.0f}", key=f"tgt_{item}", label_visibility="collapsed")
         
         pct = min(amt / tgt, 1.0) if tgt > 0 else 0
         c5.markdown(f"<div style='margin-top: 8px; font-size: 18px; text-align: right;'>{pct*100:.1f}%</div>", unsafe_allow_html=True)
@@ -268,17 +280,20 @@ elif st.session_state.current_view == 'detail':
 
     with tab3:
         st.markdown("#### Valuation")
-        v_cols = st.columns(5)
+        # 🛠️ ฟีเจอร์ 2: ปรับลดความกว้าง WACC กับ Value ($) แล้วเพิ่มให้ Growth & FCF
+        val_widths = [1.5, 2.5, 2.5, 1.2, 1.2]
+        v_cols = st.columns(val_widths)
         headers = ["", "Growth", "FCF Margin", "WACC", "Value ($)"]
         for i, h in enumerate(headers): v_cols[i].markdown(f"**{h}**")
         
         cases = ["Bear case", "Base case", "Bull case"]
         changed = False
         for r, case in enumerate(cases):
-            c_cols = st.columns(5)
+            c_cols = st.columns(val_widths)
             c_cols[0].write(case)
             for c in range(4):
-                val = c_cols[c+1].text_input("val", value=details['val_data'][r][c], key=f"v_{r}_{c}", label_visibility="collapsed")
+                # แก้บั๊ก: ใส่ {item} เข้าไปใน key เพื่อกันไม่ให้โหลดข้อมูลผิดช่อง
+                val = c_cols[c+1].text_input("val", value=details['val_data'][r][c], key=f"v_{item}_{r}_{c}", label_visibility="collapsed")
                 if val != details['val_data'][r][c]:
                     details['val_data'][r][c] = val
                     changed = True
@@ -289,33 +304,47 @@ elif st.session_state.current_view == 'detail':
         sr_r_inputs = []
         sr_s_inputs = []
         
-        r_cols = st.columns(5)
-        r_cols[0].markdown("<div style='text-align:center; color:#E2B714; font-weight:bold;'>ชื่อที่</div>", unsafe_allow_html=True)
+        # 🛠️ ฟีเจอร์ 3: สัดส่วนคอลัมน์ใหม่ (เพิ่มคอลัมน์แผนซื้อไว้ซ้ายสุด)
+        sr_widths = [2.5, 1.5, 1.2, 1.2, 1.2, 1.2] 
+        
+        r_cols = st.columns(sr_widths)
+        r_cols[0].markdown("<div style='text-align:center; color:#555555; font-weight:bold;'>แผนการซื้อเพิ่ม 📝</div>", unsafe_allow_html=True)
+        r_cols[1].markdown("<div style='text-align:center; color:#E2B714; font-weight:bold;'>แนวต้าน 🎯</div>", unsafe_allow_html=True)
         for i in range(4):
-            val = r_cols[i+1].text_input(f"R{i+1}", value=details['sr_r'][i], key=f"R{i}")
+            # แก้บั๊ก: ใส่ {item}
+            val = r_cols[i+2].text_input(f"R{i+1}", value=details['sr_r'][i], key=f"R_{item}_{i}", label_visibility="collapsed")
             sr_r_inputs.append(val)
             if val != details['sr_r'][i]: 
                 details['sr_r'][i] = val
                 changed = True
 
         for r in range(4):
-            s_cols = st.columns(5)
-            val = s_cols[0].text_input(f"S{r+1}", value=details['sr_s'][r], key=f"S{r}")
+            s_cols = st.columns(sr_widths)
+            
+            # กล่องข้อความแผนซื้อเพิ่ม
+            action_val = s_cols[0].text_input(f"Action{r+1}", value=details['sr_action'][r], key=f"Action_{item}_{r}", placeholder="เช่น ไม้ 1 ซื้อ 100 หุ้น...", label_visibility="collapsed")
+            if action_val != details['sr_action'][r]:
+                details['sr_action'][r] = action_val
+                changed = True
+
+            # กล่องตัวเลขแนวรับ
+            val = s_cols[1].text_input(f"S{r+1}", value=details['sr_s'][r], key=f"S_{item}_{r}", label_visibility="collapsed")
             sr_s_inputs.append(val)
             if val != details['sr_s'][r]: 
                 details['sr_s'][r] = val
                 changed = True
 
+            # คำนวณส่วนต่าง
             s_num = get_clean_float(val)
             for c in range(4):
                 r_num = get_clean_float(sr_r_inputs[c])
                 if s_num == 0:
-                    s_cols[c+1].markdown("<div style='text-align:center; color:#777777; padding-top:10px;'>-</div>", unsafe_allow_html=True)
+                    s_cols[c+2].markdown("<div style='text-align:center; color:#777777; padding-top:10px;'>-</div>", unsafe_allow_html=True)
                 else:
                     diff = r_num - s_num
                     pct = (diff / s_num) * 100
                     sign = "+" if diff >= 0 else ""
                     color = "#02C076" if diff >= 0 else "#F6465D"
-                    s_cols[c+1].markdown(f"<div style='text-align:center; color:{color}; padding-top:5px;'><b>{sign}${diff:,.0f}</b><br>({sign}{pct:.2f}%)</div>", unsafe_allow_html=True)
+                    s_cols[c+2].markdown(f"<div style='text-align:center; color:{color}; padding-top:5px;'><b>{sign}${diff:,.0f}</b><br>({sign}{pct:.2f}%)</div>", unsafe_allow_html=True)
         
         if changed: save_data()
